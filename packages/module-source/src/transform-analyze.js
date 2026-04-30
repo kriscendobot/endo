@@ -60,6 +60,7 @@ export const makeModuleAnalyzer = () =>
           {
             sourceFileName: sourceMapUrl,
             sourceMaps: !!sourceMapHook,
+            // @ts-expect-error - undocumented option
             inputSourceMap: sourceMap,
             experimental_preserveFormat: true,
             preserveFormat: true,
