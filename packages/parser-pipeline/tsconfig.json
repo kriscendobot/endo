@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.eslint-base.json",
+  "include": ["*.js", "src/**/*.js", "src/**/*.ts", "src/external.types.d.ts", "test"],
+  "exclude": ["test/fixture/*-error.js"],
+  "compilerOptions": {
+    "stripInternal": true
+  }
+}
