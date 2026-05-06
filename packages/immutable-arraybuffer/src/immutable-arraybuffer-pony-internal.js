@@ -1,5 +1,7 @@
 /* global globalThis */
 
+import { makeInternalHeir, getGetter } from './internal-heir.js';
+
 /**
  * I couldn't find a TypeScript `TypedArray` type. If there actually is one,
  * we should use it here.
@@ -26,194 +28,21 @@ const {
   TypeError,
   Uint8Array,
   WeakMap,
-  JSON,
-  String,
-  Error,
   // Capture structuredClone before it can be scuttled.
   structuredClone: optStructuredClone,
   // eslint-disable-next-line no-restricted-globals
 } = globalThis;
 
-const {
-  freeze,
-  defineProperty,
-  getPrototypeOf,
-  getOwnPropertyDescriptor,
-  getOwnPropertyDescriptors,
-  hasOwn,
-} = Object;
-const { apply, ownKeys } = Reflect;
+const { freeze, getPrototypeOf } = Object;
+const { apply } = Reflect;
 const { toStringTag } = Symbol;
 const { get: weakMapGet, set: weakMapSet, has: weakMapHas } = WeakMap.prototype;
 
 const { prototype: arrayBufferPrototype } = ArrayBuffer;
 const { slice, transfer: optTransfer } = arrayBufferPrototype;
 
-const { stringify } = JSON;
-const q = v => (typeof v === 'symbol' ? String(v) : stringify(v));
-
 const typedArrayPrototype = getPrototypeOf(Uint8Array.prototype);
 const { set: uint8ArraySet } = typedArrayPrototype;
-
-/**
- * For when we know the property exists and it is an accessor property with
- * a getter.
- *
- * @param {object} obj
- * @param {PropertyKey} key
- * @returns {() => any}
- */
-export const getGetter = (obj, key) => {
-  const getter = getOwnPropertyDescriptor(obj, key)?.get;
-  if (getter === undefined) {
-    throw Error(`expected property ${q(String(key))}`);
-  }
-  return getter;
-};
-
-/**
- * Makes an internal intermediate prototype (a "heir") for emulated instances
- * to inherit from. This heir inherits from `parent`,
- * so anything omitted from `queryNames`, `mutatorNames`, or `others`,
- * like `constructor`, will still be inherited from `parent`. If any of
- * these validate that their `this` is a genuine one, then those
- * validations will fail on the virtual instances.
- *
- * `makeInternalHeir` samples original members from `parent`
- * and so must be called before parent might be polluted.
- * IOW, `makeInternalHeir` should be called only by a module when
- * it initializes.
- *
- * @template [T=any]
- * @param {T} proto
- * @param {string} thisPhrase
- * @param {(v: T) => T} redirect
- * @param {string[]} queryNames
- *   Those query methods or get-only accessors that validate their
- *   this is a ArrayBuffer, where all we need to do is redirect that validation.
- * @param {string[]} mutatorNames
- *   Those index-property mutating methods or accessors, where all we need to
- *   do is throw an appropriate diagnostic. This can include method names not
- *   currently on `proto`, For those, a complaining method will be
- *   installed anyway.
- * @param {Partial<T>} others
- *   An object containing the remaining members to be copied onto the
- *   virtual prototype. It is the descriptor that is copied except that
- *   `enumerable:` is set to `false`.
- * @returns {T}
- */
-// This abstraction would not be justified for immutable ArrayBuffer by
-// itself. Rather, it is worth it for its reuse in freezable TypedArrays.
-export const makeInternalHeir = (
-  proto,
-  thisPhrase,
-  redirect,
-  queryNames,
-  mutatorNames,
-  others,
-) => {
-  const protoDescs = getOwnPropertyDescriptors(proto);
-  const otherDescs = getOwnPropertyDescriptors(others);
-
-  const internalHeir = /** @type {ThisType<T>} */ ({
-    __proto__: proto,
-  });
-
-  for (const queryName of queryNames) {
-    if (hasOwn(internalHeir, queryName)) {
-      throw new TypeError(`internal conflict on ${queryName}`);
-    }
-    const protoDesc = protoDescs[queryName];
-    if (protoDesc !== undefined) {
-      const protoGetter = protoDesc.get;
-      if (protoGetter !== undefined) {
-        const virtualGetter = getGetter(
-          /** @type {ThisType<T>} */ ({
-            get [queryName]() {
-              return apply(protoGetter, redirect(this), []);
-            },
-          }),
-          queryName,
-        );
-        defineProperty(internalHeir, queryName, {
-          ...protoDesc,
-          get: virtualGetter,
-          set: undefined,
-        });
-      } else {
-        const protoMethod = protoDesc.value;
-        if (typeof protoMethod !== 'function') {
-          throw new TypeError(`internal unexpected non-method ${queryName}`);
-        }
-        const virtualMethod = /** @type {ThisType<T>} */ ({
-          [queryName](...args) {
-            return apply(protoMethod, redirect(this), args);
-          },
-        })[queryName];
-        defineProperty(internalHeir, queryName, {
-          ...protoDesc,
-          value: virtualMethod,
-        });
-      }
-    }
-  }
-
-  for (const mutatorName of mutatorNames) {
-    if (hasOwn(internalHeir, mutatorName)) {
-      throw new TypeError(`internal conflict on ${mutatorName}`);
-    }
-    const protoDesc = protoDescs[mutatorName];
-    if (protoDesc !== undefined) {
-      const protoGetter = protoDesc.get;
-      if (protoGetter !== undefined) {
-        const virtualGetter = getGetter(
-          /** @type {ThisType<T>} */ ({
-            get [mutatorName]() {
-              throw new TypeError(`cannot ${mutatorName} ${thisPhrase}`);
-            },
-          }),
-          mutatorName,
-        );
-        defineProperty(internalHeir, mutatorName, {
-          ...protoDesc,
-          get: virtualGetter,
-          set: virtualGetter, // weird but better diagnostic
-        });
-        // eslint-disable-next-line no-continue
-        continue;
-      }
-    }
-    // For the mutator, we install a complaining method whether or
-    // not one was on proto
-    const virtualMethod = /** @type {ThisType<T>} */ ({
-      [mutatorName](..._args) {
-        throw new TypeError(`cannot ${mutatorName} ${thisPhrase}`);
-      },
-    })[mutatorName];
-    defineProperty(internalHeir, mutatorName, {
-      writable: true,
-      enumerable: false,
-      configurable: true,
-      ...protoDesc,
-      value: virtualMethod,
-    });
-  }
-
-  for (const key of ownKeys(otherDescs)) {
-    if (hasOwn(internalHeir, key)) {
-      throw new TypeError(`internal conflict on ${String(key)}`);
-    }
-    // @ts-expect-error known TS bug. Symbols are valid indexes
-    const otherDesc = otherDescs[key];
-    defineProperty(internalHeir, key, {
-      ...otherDesc,
-      enumerable: false,
-    });
-  }
-
-  return /** @type {T} */ (internalHeir);
-};
-freeze(makeInternalHeir);
 
 /**
  * The original `TypeArray.prototype.buffer` getter function.

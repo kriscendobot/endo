@@ -1,15 +1,18 @@
 /* global globalThis */
 
+import { makeInternalHeir } from './internal-heir.js';
 import {
   hiddenBuffers,
   reverseHiddenBuffers,
   FERAL_GET_ARRAY_BUFFER,
-  makeInternalHeir,
 } from './immutable-arraybuffer-pony-internal.js';
 
 /**
  * Stangely, TypeScript only provides types for the concrete subtypes of
  * `TypedArray`, but not `TypeArray` itself.
+ * As suggested at
+ * https://github.com/microsoft/TypeScript/issues/15402#issuecomment-297544403
+ * with the addition of `Float16Array` which happened recently.
  *
  * @typedef {
  *  | Int8Array
@@ -34,6 +37,7 @@ const {
   TypeError,
   Uint8Array,
   Proxy,
+  Symbol,
   // eslint-disable-next-line no-restricted-globals
 } = globalThis;
 
@@ -43,12 +47,12 @@ const {
   defineProperties,
   getPrototypeOf,
   setPrototypeOf,
-  freeze,
 } = Object;
 const { apply, construct } = Reflect;
 const { get: weakMapGet, has: weakMapHas } = WeakMap.prototype;
 const TypedArray = getPrototypeOf(Uint8Array);
 const { prototype: typedArrayPrototype } = TypedArray;
+const { iterator: symbolIterator, toStringTag: symbolToStringTag } = Symbol;
 
 /**
  * Could be used by the shim as the getter for a replacement of
@@ -71,29 +75,54 @@ export const virtualTypedArrayBufferGetter = (() => {
   return pseudoGetter;
 })();
 
-/**
- * Those query methods or get-only accessors that validate their
- * this is a typed array, where all we need to do is redirect that validation.
- */
-const typeArrayPrototypeQueries = freeze([
-  'at',
-  'buffer',
-  'byteLength',
-  'byteOffset',
-  'entries',
-  'every',
-]);
-
-/**
- * Those index-property mutating methods or accessors, where all we need to is
- * throw an appropriate diagnostic.
- */
-const typedArrayPrototypeMutators = freeze(['copyWithin', 'fill']);
-
-// Omits `constructor` so `TypedArray.prototype.constructor` is inherited
 const freezableTypedArrayInternalPrototype = makeInternalHeir(
   typedArrayPrototype,
   'a freezable TypedArray',
+  vfta => vfta, // TODO fix
+  [
+    // queries
+    'at',
+    'buffer',
+    'byteLength',
+    'byteOffset',
+    'entries',
+    'every',
+    'filter',
+    'find',
+    'findIndex',
+    'findLast',
+    'findLastIndex',
+    'forEach',
+    'includes',
+    'indexOf',
+    'join',
+    'keys',
+    'lastIndexOf',
+    'length',
+    'map',
+    'reduce',
+    'reduceRight',
+    'some',
+    'toLocaleString',
+    'toReversed',
+    'toSorted',
+    'toString',
+    symbolIterator,
+  ],
+  [
+    // mutators
+    'copyWithin',
+    'fill',
+    'reverse',
+    'set',
+    'sort',
+  ],
+  /** @type {ThisType<TypedArray>} */ ({
+    slice: undefined,
+    subarray: undefined,
+    with: undefined,
+    [symbolToStringTag]: 'FreezableTypedArray',
+  }),
 );
 
 /**
