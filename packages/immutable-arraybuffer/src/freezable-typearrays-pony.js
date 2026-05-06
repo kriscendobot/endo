@@ -4,7 +4,28 @@ import {
   hiddenBuffers,
   reverseHiddenBuffers,
   FERAL_GET_ARRAY_BUFFER,
+  makeInternalHeir,
 } from './immutable-arraybuffer-pony-internal.js';
+
+/**
+ * Stangely, TypeScript only provides types for the concrete subtypes of
+ * `TypedArray`, but not `TypeArray` itself.
+ *
+ * @typedef {
+ *  | Int8Array
+ *  | Uint8Array
+ *  | Uint8ClampedArray
+ *  | Int16Array
+ *  | Uint16Array
+ *  | Float16Array
+ *  | Int32Array
+ *  | Uint32Array
+ *  | Float32Array
+ *  | Float64Array
+ *  | BigInt64Array
+ *  | BigUint64Array
+ * } TypedArray
+ */
 
 const {
   Object,
@@ -22,20 +43,19 @@ const {
   defineProperties,
   getPrototypeOf,
   setPrototypeOf,
+  freeze,
 } = Object;
 const { apply, construct } = Reflect;
 const { get: weakMapGet, has: weakMapHas } = WeakMap.prototype;
 const TypedArray = getPrototypeOf(Uint8Array);
+const { prototype: typedArrayPrototype } = TypedArray;
 
 /**
  * Could be used by the shim as the getter for a replacement of
  * `TypedArray.prototype.buffer`.
- *
- * BUG TODO FIXME BROKEN the this-argument should be a real or emulated
- * TypedArray, not an ArrayBuffer.
  */
 export const virtualTypedArrayBufferGetter = (() => {
-  /** @type {ThisType<ArrayBuffer>} */
+  /** @type {ThisType<TypedArray>} */
   const obj = {
     get buffer() {
       if (apply(weakMapHas, reverseHiddenBuffers, [this])) {
@@ -50,6 +70,31 @@ export const virtualTypedArrayBufferGetter = (() => {
   );
   return pseudoGetter;
 })();
+
+/**
+ * Those query methods or get-only accessors that validate their
+ * this is a typed array, where all we need to do is redirect that validation.
+ */
+const typeArrayPrototypeQueries = freeze([
+  'at',
+  'buffer',
+  'byteLength',
+  'byteOffset',
+  'entries',
+  'every',
+]);
+
+/**
+ * Those index-property mutating methods or accessors, where all we need to is
+ * throw an appropriate diagnostic.
+ */
+const typedArrayPrototypeMutators = freeze(['copyWithin', 'fill']);
+
+// Omits `constructor` so `TypedArray.prototype.constructor` is inherited
+const freezableTypedArrayInternalPrototype = makeInternalHeir(
+  typedArrayPrototype,
+  'a freezable TypedArray',
+);
 
 /**
  * Could be used by the shim to replace all the concrete TypedArray constructors

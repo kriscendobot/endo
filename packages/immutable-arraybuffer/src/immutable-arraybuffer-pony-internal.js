@@ -34,8 +34,14 @@ const {
   // eslint-disable-next-line no-restricted-globals
 } = globalThis;
 
-const { freeze, defineProperty, getPrototypeOf, getOwnPropertyDescriptor } =
-  Object;
+const {
+  freeze,
+  defineProperty,
+  getPrototypeOf,
+  getOwnPropertyDescriptor,
+  getOwnPropertyDescriptors,
+  hasOwn,
+} = Object;
 const { apply, ownKeys } = Reflect;
 const { toStringTag } = Symbol;
 const { get: weakMapGet, set: weakMapSet, has: weakMapHas } = WeakMap.prototype;
@@ -43,7 +49,8 @@ const { get: weakMapGet, set: weakMapSet, has: weakMapHas } = WeakMap.prototype;
 const { prototype: arrayBufferPrototype } = ArrayBuffer;
 const { slice, transfer: optTransfer } = arrayBufferPrototype;
 
-const { stringify: q } = JSON;
+const { stringify } = JSON;
+const q = v => (typeof v === 'symbol' ? String(v) : stringify(v));
 
 const typedArrayPrototype = getPrototypeOf(Uint8Array.prototype);
 const { set: uint8ArraySet } = typedArrayPrototype;
@@ -63,6 +70,150 @@ export const getGetter = (obj, key) => {
   }
   return getter;
 };
+
+/**
+ * Makes an internal intermediate prototype (a "heir") for emulated instances
+ * to inherit from. This heir inherits from `parent`,
+ * so anything omitted from `queryNames`, `mutatorNames`, or `others`,
+ * like `constructor`, will still be inherited from `parent`. If any of
+ * these validate that their `this` is a genuine one, then those
+ * validations will fail on the virtual instances.
+ *
+ * `makeInternalHeir` samples original members from `parent`
+ * and so must be called before parent might be polluted.
+ * IOW, `makeInternalHeir` should be called only by a module when
+ * it initializes.
+ *
+ * @template [T=any]
+ * @param {T} proto
+ * @param {string} thisPhrase
+ * @param {(v: T) => T} redirect
+ * @param {string[]} queryNames
+ *   Those query methods or get-only accessors that validate their
+ *   this is a ArrayBuffer, where all we need to do is redirect that validation.
+ * @param {string[]} mutatorNames
+ *   Those index-property mutating methods or accessors, where all we need to
+ *   do is throw an appropriate diagnostic. This can include method names not
+ *   currently on `proto`, For those, a complaining method will be
+ *   installed anyway.
+ * @param {Partial<T>} others
+ *   An object containing the remaining members to be copied onto the
+ *   virtual prototype. It is the descriptor that is copied except that
+ *   `enumerable:` is set to `false`.
+ * @returns {T}
+ */
+// This abstraction would not be justified for immutable ArrayBuffer by
+// itself. Rather, it is worth it for its reuse in freezable TypedArrays.
+export const makeInternalHeir = (
+  proto,
+  thisPhrase,
+  redirect,
+  queryNames,
+  mutatorNames,
+  others,
+) => {
+  const protoDescs = getOwnPropertyDescriptors(proto);
+  const otherDescs = getOwnPropertyDescriptors(others);
+
+  const internalHeir = /** @type {ThisType<T>} */ ({
+    __proto__: proto,
+  });
+
+  for (const queryName of queryNames) {
+    if (hasOwn(internalHeir, queryName)) {
+      throw new TypeError(`internal conflict on ${queryName}`);
+    }
+    const protoDesc = protoDescs[queryName];
+    if (protoDesc !== undefined) {
+      const protoGetter = protoDesc.get;
+      if (protoGetter !== undefined) {
+        const virtualGetter = getGetter(
+          /** @type {ThisType<T>} */ ({
+            get [queryName]() {
+              return apply(protoGetter, redirect(this), []);
+            },
+          }),
+          queryName,
+        );
+        defineProperty(internalHeir, queryName, {
+          ...protoDesc,
+          get: virtualGetter,
+          set: undefined,
+        });
+      } else {
+        const protoMethod = protoDesc.value;
+        if (typeof protoMethod !== 'function') {
+          throw new TypeError(`internal unexpected non-method ${queryName}`);
+        }
+        const virtualMethod = /** @type {ThisType<T>} */ ({
+          [queryName](...args) {
+            return apply(protoMethod, redirect(this), args);
+          },
+        })[queryName];
+        defineProperty(internalHeir, queryName, {
+          ...protoDesc,
+          value: virtualMethod,
+        });
+      }
+    }
+  }
+
+  for (const mutatorName of mutatorNames) {
+    if (hasOwn(internalHeir, mutatorName)) {
+      throw new TypeError(`internal conflict on ${mutatorName}`);
+    }
+    const protoDesc = protoDescs[mutatorName];
+    if (protoDesc !== undefined) {
+      const protoGetter = protoDesc.get;
+      if (protoGetter !== undefined) {
+        const virtualGetter = getGetter(
+          /** @type {ThisType<T>} */ ({
+            get [mutatorName]() {
+              throw new TypeError(`cannot ${mutatorName} ${thisPhrase}`);
+            },
+          }),
+          mutatorName,
+        );
+        defineProperty(internalHeir, mutatorName, {
+          ...protoDesc,
+          get: virtualGetter,
+          set: virtualGetter, // weird but better diagnostic
+        });
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+    }
+    // For the mutator, we install a complaining method whether or
+    // not one was on proto
+    const virtualMethod = /** @type {ThisType<T>} */ ({
+      [mutatorName](..._args) {
+        throw new TypeError(`cannot ${mutatorName} ${thisPhrase}`);
+      },
+    })[mutatorName];
+    defineProperty(internalHeir, mutatorName, {
+      writable: true,
+      enumerable: false,
+      configurable: true,
+      ...protoDesc,
+      value: virtualMethod,
+    });
+  }
+
+  for (const key of ownKeys(otherDescs)) {
+    if (hasOwn(internalHeir, key)) {
+      throw new TypeError(`internal conflict on ${String(key)}`);
+    }
+    // @ts-expect-error known TS bug. Symbols are valid indexes
+    const otherDesc = otherDescs[key];
+    defineProperty(internalHeir, key, {
+      ...otherDesc,
+      enumerable: false,
+    });
+  }
+
+  return /** @type {T} */ (internalHeir);
+};
+freeze(makeInternalHeir);
 
 /**
  * The original `TypeArray.prototype.buffer` getter function.
@@ -177,8 +328,6 @@ export const reverseHiddenBuffers = new WeakMap();
  * @param {ArrayBuffer} immuAB
  */
 const getBuffer = immuAB => {
-  // Safe because this WeakMap owns its get method.
-  // eslint-disable-next-line @endo/no-polymorphic-call
   const result = apply(weakMapGet, hiddenBuffers, [immuAB]);
   if (result) {
     return result;
@@ -186,13 +335,22 @@ const getBuffer = immuAB => {
   throw TypeError('Not an emulated Immutable ArrayBuffer');
 };
 
-// Omits `constructor` so `Array.prototype.constructor` is inherited.
-const ImmutableArrayBufferInternalPrototype =
+const immutableArrayBufferInternalPrototype = makeInternalHeir(
+  arrayBufferPrototype,
+  'an immutable ArrayBuffer',
+  getBuffer,
+  [
+    // redirected queries
+    'byteLength',
+    'slice',
+  ],
+  [
+    // complaining mutators
+    'resize',
+    'transfer',
+    'transferToFixedLength',
+  ],
   /** @type {ThisType<ArrayBuffer>} */ ({
-    __proto__: arrayBufferPrototype,
-    get byteLength() {
-      return apply(originalGetArrayBufferByteLength, getBuffer(this), []);
-    },
     get detached() {
       getBuffer(this); // shim brand check
       return false;
@@ -209,41 +367,16 @@ const ImmutableArrayBufferInternalPrototype =
       getBuffer(this); // shim brand check
       return true;
     },
-    slice(start = undefined, end = undefined) {
-      return arrayBufferSlice(getBuffer(this), start, end);
-    },
     sliceToImmutable(start = undefined, end = undefined) {
       // eslint-disable-next-line no-use-before-define
       return sliceBufferToImmutable(getBuffer(this), start, end);
-    },
-    resize(_newByteLength = undefined) {
-      getBuffer(this); // shim brand check
-      throw TypeError('Cannot resize an immutable ArrayBuffer');
-    },
-    transfer(_newLength = undefined) {
-      getBuffer(this); // shim brand check
-      throw TypeError('Cannot detach an immutable ArrayBuffer');
-    },
-    transferToFixedLength(_newLength = undefined) {
-      getBuffer(this); // shim brand check
-      throw TypeError('Cannot detach an immutable ArrayBuffer');
-    },
-    transferToImmutable(_newLength = undefined) {
-      getBuffer(this); // shim brand check
-      throw TypeError('Cannot detach an immutable ArrayBuffer');
     },
     /**
      * See https://github.com/endojs/endo/tree/master/packages/immutable-arraybuffer#purposeful-violation
      */
     [toStringTag]: 'ImmutableArrayBuffer',
-  });
-
-// Better fidelity emulation of a class prototype
-for (const key of ownKeys(ImmutableArrayBufferInternalPrototype)) {
-  defineProperty(ImmutableArrayBufferInternalPrototype, key, {
-    enumerable: false,
-  });
-}
+  }),
+);
 
 /**
  * Emulates what would have been the encapsulated `ImmutableArrayBufferInternal`
@@ -257,11 +390,9 @@ for (const key of ownKeys(ImmutableArrayBufferInternalPrototype)) {
 const makeImmutableArrayBufferInternal = realBuffer => {
   const result = /** @type {ArrayBuffer} */ (
     /** @type {unknown} */ ({
-      __proto__: ImmutableArrayBufferInternalPrototype,
+      __proto__: immutableArrayBufferInternalPrototype,
     })
   );
-  // Safe because this WeakMap owns its set method.
-  // eslint-disable-next-line @endo/no-polymorphic-call
   apply(weakMapSet, hiddenBuffers, [result, realBuffer]);
   apply(weakMapSet, reverseHiddenBuffers, [realBuffer, result]);
   return result;
@@ -274,7 +405,6 @@ freeze(makeImmutableArrayBufferInternal);
  * @param {ArrayBuffer} buffer
  * @returns {boolean}
  */
-// eslint-disable-next-line @endo/no-polymorphic-call
 export const isBufferImmutable = buffer =>
   apply(weakMapHas, hiddenBuffers, [buffer]);
 
@@ -290,8 +420,6 @@ export const sliceBufferToImmutable = (
   start = undefined,
   end = undefined,
 ) => {
-  // Safe because this WeakMap owns its get method.
-  // eslint-disable-next-line @endo/no-polymorphic-call
   let realBuffer = apply(weakMapGet, hiddenBuffers, [buffer]);
   if (realBuffer === undefined) {
     realBuffer = buffer;
@@ -318,7 +446,6 @@ if (optArrayBufferTransfer) {
     } else {
       buffer = optArrayBufferTransfer(buffer);
       const oldLength = buffer.byteLength;
-      // eslint-disable-next-line @endo/restrict-comparison-operands
       if (newLength <= oldLength) {
         buffer = arrayBufferSlice(buffer, 0, newLength);
       } else {
