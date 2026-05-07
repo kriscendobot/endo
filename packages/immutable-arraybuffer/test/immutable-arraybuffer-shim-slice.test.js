@@ -1,7 +1,10 @@
+/* global globalThis */
+
 import test from 'ava';
 import '../src/immutable-arraybuffer-shim.js';
 
 const { isFrozen, getPrototypeOf } = Object;
+const { apply } = Reflect;
 
 test('Immutable ArrayBuffer shim installed but not hardened', t => {
   const ab1 = new ArrayBuffer(0);
@@ -202,3 +205,63 @@ test('sliceToImmutable shim', t => {
   const ta3 = new Uint8Array(ab3.slice());
   t.deepEqual([...ta3], [5]);
 });
+
+test('(TypedArray|Buffer).(slice|subArray) baseline', t => {
+  const ab = new ArrayBuffer(2);
+
+  const ta = new Uint8Array(ab);
+  const normalSlice = ta.slice();
+  // Copies the ArrayBuffer
+  t.not(normalSlice.buffer, ab);
+  const normalSubarray = ta.subarray();
+  // New view onto the same ArrayBuffer
+  t.is(normalSubarray.buffer, ab);
+
+  if (typeof globalThis.Buffer !== 'function') {
+    t.log("testing on platform without Node's nodeBuffer");
+    return;
+  }
+  const {
+    prototype: { slice: bufSlice, subarray: bufSubarray },
+  } = globalThis.Buffer;
+
+  const testSlice = apply(bufSlice, ta, []);
+  // New view onto the same ArrayBuffer. This is the surpring difference
+  // from TypedArray.prototype.slice
+  t.is(testSlice.buffer, ab);
+  const testSubarray = apply(bufSubarray, ta, []);
+  // New view onto the same ArrayBuffer
+  t.is(testSubarray.buffer, ab);
+});
+
+test.failing(
+  '(TypedArray|Buffer).(slice|subArray) on freezable TypeArray',
+  t => {
+    const ab = new ArrayBuffer(2);
+    const iab = ab.sliceToImmutable();
+
+    const fta = new Uint8Array(iab);
+    const normalSlice = fta.slice();
+    // Copies the ArrayBuffer
+    t.not(iab, normalSlice.buffer);
+    const normalSubarray = fta.subarray();
+    // New view onto the same ArrayBuffer
+    t.is(normalSubarray.buffer, iab);
+
+    if (typeof globalThis.Buffer !== 'function') {
+      t.log("testing on platform without Node's nodeBuffer");
+      return;
+    }
+    const {
+      prototype: { slice: bufSlice, subarray: bufSubarray },
+    } = globalThis.Buffer;
+
+    const testSlice = apply(bufSlice, fta, []);
+    // New view onto the same ArrayBuffer. This is the surpring difference
+    // from TypedArray.prototype.slice
+    t.is(testSlice.buffer, iab);
+    const testSubarray = apply(bufSubarray, fta, []);
+    // New view onto the same ArrayBuffer
+    t.is(testSubarray.buffer, iab);
+  },
+);
