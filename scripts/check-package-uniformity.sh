@@ -96,11 +96,37 @@ for PKG in "${PKGS[@]}"; do
 done
 
 # --- package.json field uniformity ---------------------------------------
+# Known historical exceptions: <pkg>:<jq-path>:<allowed-value>.
+# Each entry permits one specific package.json field to deviate from
+# the skel value for a documented reason. Keep this list small and
+# named; every entry needs a comment explaining why.
+EXCEPTIONS=(
+  # eslint-plugin is a CommonJS plugin for ESLint v8 (it consumes
+  # requireindex and uses __dirname / module.exports). Migrating it
+  # to ESM is a substantial refactor; until that lands, the package
+  # legitimately ships without a 'type' field (effectively commonjs).
+  'packages/eslint-plugin:.type:'
+)
+
+function is_exception() {
+  local pkg=$1 path=$2 actual=$3
+  local entry
+  for entry in "${EXCEPTIONS[@]}"; do
+    if [ "$entry" = "$pkg:$path:$actual" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 function assert_field() {
   local pkg=$1 json=$2 path=$3 expected=$4
   local actual
   actual=$(jq -r "$path // \"\"" "$json")
   if [ "$actual" != "$expected" ]; then
+    if is_exception "$pkg" "$path" "$actual"; then
+      return 0
+    fi
     echo "$pkg: package.json $path expected '$expected' actual '$actual'"
     EXIT=1
   fi
