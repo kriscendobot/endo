@@ -30,6 +30,7 @@
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-import": "catalog:dev",
     "eslint-plugin-jsdoc": "^50.6.1",
+    "eslint-plugin-unicorn": "^56.0.1",
     "lerna": "^8.2.4",
     "prettier": "^3.5.3",
     "ses": "workspace:^",
