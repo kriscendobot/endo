@@ -3,12 +3,33 @@
 
 import net from 'net';
 import harden from '@endo/harden';
+import { makePipe } from '@endo/stream';
+import { makeSyrupsReader } from '@endo/syrup-frame/reader.js';
+import { makeSyrupsWriter } from '@endo/syrup-frame/writer.js';
 
 import { locationToLocationId } from '../client/util.js';
 
 /**
- * @import { Connection, NetLayer, NetlayerHandlers, SocketOperations } from '../client/types.js'
+ * @import { Connection, Logger, NetLayer, NetlayerHandlers, SocketOperations } from '../client/types.js'
  * @import { OcapnLocation } from '../codecs/components.js'
+ */
+
+/**
+ * Wire framing for the test-only TCP netlayer.
+ *
+ * - `'none'` (default): each write is sent as raw bytes, and each
+ *   `socket.on('data')` chunk is dispatched as a complete OCapN
+ *   message. This matches the `ocapn/ocapn-test-suite` Python
+ *   `testing_only_tcp` netlayer, which writes a syrup-encoded
+ *   record with `sendall` and reads one back with
+ *   `syrup.syrup_read` (no length prefix on the wire).
+ * - `'syrups'`: each message is wrapped in the
+ *   `<length>:<payload>` framing implemented by `@endo/syrup-frame`.
+ *   Adds robustness against TCP chunk boundaries that split a
+ *   single OCapN message and works with peers that opt in to the
+ *   same framing.
+ *
+ * @typedef {'none' | 'syrups'} TcpTestOnlyFraming
  */
 
 const { isNaN } = Number;
@@ -47,6 +68,104 @@ const makeSocketOperations = (socket, writeLatencyMs) => {
 };
 
 /**
+ * Wraps `socketOps` so that `write(bytes)` emits a syrups-framed
+ * record (`<length>:<payload>`) instead of raw bytes. Uses the
+ * `@endo/syrup-frame` writer over a tiny synchronous sink so framing
+ * stays inline with the underlying socket write.
+ *
+ * @param {SocketOperations} socketOps
+ * @returns {SocketOperations}
+ */
+const makeSyrupsWritingSocketOperations = socketOps => {
+  /** @type {import('@endo/stream').Writer<Uint8Array, undefined>} */
+  const sink = harden({
+    async next(bytes) {
+      socketOps.write(bytes);
+      return harden({ done: false, value: undefined });
+    },
+    async return() {
+      socketOps.end();
+      return harden({ done: true, value: undefined });
+    },
+    async throw(error) {
+      throw error;
+    },
+    [Symbol.asyncIterator]() {
+      return sink;
+    },
+  });
+  const syrupsWriter = makeSyrupsWriter(sink);
+  return {
+    write(bytes) {
+      // The writer's `next` resolves promptly because `sink.next`
+      // resolves on the next microtask; ignore the returned promise.
+      syrupsWriter.next(bytes).catch(() => {});
+    },
+    end() {
+      socketOps.end();
+    },
+  };
+};
+
+/**
+ * Wires a stream pipe between socket `data` events and the
+ * `@endo/syrup-frame` reader. Each whole frame is forwarded to
+ * `onFrame`. Errors and pipe closure are reported to `logger`.
+ *
+ * @param {Logger} logger
+ * @param {(frame: Uint8Array) => void} onFrame
+ * @returns {{ pushChunk: (chunk: Uint8Array) => void, end: () => void }}
+ */
+const makeSyrupsDeframer = (logger, onFrame) => {
+  /** @type {[import('@endo/stream').Writer<Uint8Array>, import('@endo/stream').Reader<Uint8Array>]} */
+  const pipe = makePipe();
+  const [chunkWriter, chunkReader] = pipe;
+  const syrupsReader = makeSyrupsReader(chunkReader, {
+    name: 'tcp-testing-only',
+  });
+  let closed = false;
+  // Drain the reader in the background; surface decode errors via
+  // the logger and stop forwarding once closed.
+  const drain = async () => {
+    await null;
+    try {
+      for await (const frame of syrupsReader) {
+        if (closed) {
+          break;
+        }
+        // The syrups reader may yield a `subarray()` of an internal
+        // buffer; downstream OCapN syrup decoding requires a
+        // zero-`byteOffset` view, so allocate a fresh copy before
+        // dispatching.
+        const owned = new Uint8Array(frame.length);
+        owned.set(frame);
+        onFrame(owned);
+      }
+    } catch (err) {
+      if (!closed) {
+        logger.error('Syrups deframer error:', err);
+      }
+    }
+  };
+  drain();
+  return {
+    pushChunk(chunk) {
+      if (closed) {
+        return;
+      }
+      chunkWriter.next(chunk).catch(() => {});
+    },
+    end() {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      chunkWriter.return(undefined).catch(() => {});
+    },
+  };
+};
+
+/**
  * @typedef {object} ConnectionSocketPair
  * @property {Connection} connection
  * @property {net.Socket} socket
@@ -68,6 +187,7 @@ const makeSocketOperations = (socket, writeLatencyMs) => {
  * @param {string} [options.specifiedHostname]
  * @param {string} [options.specifiedDesignator]
  * @param {number} [options.writeLatencyMs] - Optional artificial latency for writes (ms), useful for testing pipelining
+ * @param {TcpTestOnlyFraming} [options.framing] - Wire framing for outbound writes and inbound reads. Defaults to `'none'`, matching the Python `ocapn-test-suite` `testing_only_tcp` netlayer.
  * @returns {Promise<TcpTestOnlyNetLayer>}
  */
 export const makeTcpNetLayer = async ({
@@ -78,7 +198,11 @@ export const makeTcpNetLayer = async ({
   // Unclear if a fallback value is reasonable.
   specifiedDesignator = '0000',
   writeLatencyMs = 0,
+  framing = 'none',
 }) => {
+  if (framing !== 'none' && framing !== 'syrups') {
+    throw Error(`Unsupported framing: ${framing}`);
+  }
   // Create and start TCP server
   const server = net.createServer();
 
@@ -131,8 +255,29 @@ export const makeTcpNetLayer = async ({
   const setupSocketHandlers = (socket, connection, onClose) => {
     activeSockets.add(socket);
 
+    // When framing is `'syrups'`, run inbound bytes through the
+    // syrups deframer so each call to `handleMessageData` carries
+    // exactly one OCapN message regardless of how TCP chunked the
+    // wire. With `'none'` framing, dispatch raw chunks unchanged.
+    const deframer =
+      framing === 'syrups'
+        ? makeSyrupsDeframer(logger, frame => {
+            if (!connection.isDestroyed) {
+              handlers.handleMessageData(connection, frame);
+            } else {
+              logger.info(
+                'TcpTestOnlyNetLayer received message after connection was destroyed',
+              );
+            }
+          })
+        : undefined;
+
     socket.on('data', data => {
       const bytes = bufferToBytes(data);
+      if (deframer) {
+        deframer.pushChunk(bytes);
+        return;
+      }
       if (!connection.isDestroyed) {
         handlers.handleMessageData(connection, bytes);
       } else {
@@ -150,6 +295,9 @@ export const makeTcpNetLayer = async ({
     socket.on('close', () => {
       logger.info('Connection closed');
       activeSockets.delete(socket);
+      if (deframer) {
+        deframer.end();
+      }
       if (onClose) {
         onClose();
       }
@@ -161,6 +309,22 @@ export const makeTcpNetLayer = async ({
       connection.end();
       handlers.handleConnectionClose(connection);
     });
+  };
+
+  /**
+   * Returns the socket operations the client connection should use.
+   * For `'syrups'` framing, wraps the raw socket operations in a
+   * syrups writer so every call to `connection.write` becomes one
+   * length-prefixed frame on the wire.
+   * @param {net.Socket} socket
+   * @returns {SocketOperations}
+   */
+  const makeFramedSocketOperations = socket => {
+    const rawOps = makeSocketOperations(socket, writeLatencyMs);
+    if (framing === 'syrups') {
+      return makeSyrupsWritingSocketOperations(rawOps);
+    }
+    return rawOps;
   };
 
   /**
@@ -183,7 +347,7 @@ export const makeTcpNetLayer = async ({
     }
     const socket = net.createConnection({ host, port: remotePort });
 
-    const socketOps = makeSocketOperations(socket, writeLatencyMs);
+    const socketOps = makeFramedSocketOperations(socket);
     // eslint-disable-next-line no-use-before-define
     const connection = handlers.makeConnection(netlayer, true, socketOps);
 
@@ -264,7 +428,7 @@ export const makeTcpNetLayer = async ({
       `${socket.remoteAddress}:${socket.remotePort}`,
     );
 
-    const socketOps = makeSocketOperations(socket, writeLatencyMs);
+    const socketOps = makeFramedSocketOperations(socket);
     const connection = handlers.makeConnection(netlayer, false, socketOps);
 
     setupSocketHandlers(socket, connection);
