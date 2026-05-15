@@ -96,10 +96,10 @@ const DENSITY = LOGO_LINES.map((line, y) => {
  * @returns {number}
  */
 const cellHash = (x, y) => {
-  let n = (x * 374761393 + y * 668265263) | 0;
-  n = (n ^ (n >>> 13)) * 1274126177;
+  let n = (x * 374_761_393 + y * 668_265_263) | 0;
+  n = (n ^ (n >>> 13)) * 1_274_126_177;
   n = (n ^ (n >>> 16)) >>> 0;
-  return n / 0x100000000;
+  return n / 0x1_00_00_00_00;
 };
 
 /**
@@ -309,7 +309,7 @@ export const AnimatedLogo = ({ cols, fps = 14 }) => {
     const id = setInterval(() => {
       // Mask to 16 bits so the counter never grows unboundedly. We
       // only need it to change; the actual value is unused.
-      setFrame(f => (f + 1) & 0xffff);
+      setFrame(f => (f + 1) & 0xff_ff);
     }, intervalMs);
     return () => clearInterval(id);
   }, [fps]);

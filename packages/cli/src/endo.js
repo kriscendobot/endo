@@ -61,7 +61,7 @@ export const main = async rawArgs => {
           throw `-l,--listen,--port can only be specified once`;
         }
         const port = parseInt(arg, 10);
-        if (Number.isNaN(port) || (port & ~0xffff) !== 0) {
+        if (Number.isNaN(port) || (port & ~0xff_ff) !== 0) {
           throw `-l,--listen,--port flag must be a valid port number, got ${JSON.stringify(
             arg,
           )}`;

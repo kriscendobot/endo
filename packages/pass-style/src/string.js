@@ -31,7 +31,7 @@ export const isWellFormedString = hasWellFormedStringMethod
         // UTF16 code unit. But if it encounters an unpaired surrogate,
         // it will produce it.
         const cp = /** @type {number} */ (ch.codePointAt(0));
-        if (cp >= 0xd800 && cp <= 0xdfff) {
+        if (cp >= 0xd8_00 && cp <= 0xdf_ff) {
           // All surrogates are in this range. The string iterator only
           // produces a character in this range for unpaired surrogates,
           // which only happens if the string is not well-formed.

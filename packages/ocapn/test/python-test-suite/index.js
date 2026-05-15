@@ -165,7 +165,7 @@ const start = async () => {
     makeTcpNetLayer({
       handlers,
       logger,
-      specifiedPort: 22046,
+      specifiedPort: 22_046,
     }),
   );
 };

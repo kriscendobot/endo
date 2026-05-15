@@ -13,8 +13,8 @@ test('taming NaN64 DataView side-channel', t => {
   t.true('getFloat32' in DataView.prototype);
   t.true('setFloat32' in DataView.prototype);
 
-  const canonicalNaN64Encoding = 0x7ff8000000000000n;
-  const otherNaN64Encoding = 0xfff8000000000000n;
+  const canonicalNaN64Encoding = 0x7f_f8_00_00_00_00_00_00n;
+  const otherNaN64Encoding = 0xff_f8_00_00_00_00_00_00n;
 
   // This is the JavaScript analog to a C union: a way to map between a float as a
   // number and the bits that represent the float as a buffer full of bytes.  Note

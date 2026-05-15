@@ -1220,7 +1220,7 @@ const astralIdentifierStartCodes = [
   196, 60, 67, 8, 0, 1205, 3, 2, 26, 2, 1, 2, 0, 3, 0, 2, 9, 2, 3, 2, 0, 2, 0,
   7, 0, 5, 0, 2, 0, 2, 0, 2, 2, 2, 1, 2, 0, 3, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 1,
   2, 0, 3, 3, 2, 6, 2, 3, 2, 3, 2, 0, 2, 9, 2, 16, 6, 2, 2, 4, 2, 16, 4421,
-  42717, 35, 4148, 12, 221, 3, 5761, 15, 7472, 3104, 541, 1507, 4938,
+  42_717, 35, 4148, 12, 221, 3, 5761, 15, 7472, 3104, 541, 1507, 4938,
 ];
 
 // eslint-disable-next-line comma-spacing
@@ -1233,10 +1233,10 @@ const astralIdentifierCodes = [
   5, 9, 243, 14, 166, 9, 71, 5, 2, 1, 3, 3, 2, 0, 2, 1, 13, 9, 120, 6, 3, 6, 4,
   0, 29, 9, 41, 6, 2, 3, 9, 0, 10, 10, 47, 15, 406, 7, 2, 7, 17, 9, 57, 21, 2,
   13, 123, 5, 4, 0, 2, 1, 2, 6, 2, 0, 9, 9, 49, 4, 2, 1, 2, 4, 9, 9, 330, 3,
-  19306, 9, 135, 4, 60, 6, 26, 9, 1014, 0, 2, 54, 8, 3, 82, 0, 12, 1, 19628, 1,
+  19_306, 9, 135, 4, 60, 6, 26, 9, 1014, 0, 2, 54, 8, 3, 82, 0, 12, 1, 19_628, 1,
   5319, 4, 4, 5, 9, 7, 3, 6, 31, 3, 149, 2, 1418, 49, 513, 54, 5, 49, 9, 0, 15,
   0, 23, 4, 2, 14, 1361, 6, 2, 16, 3, 6, 2, 1, 2, 4, 262, 6, 10, 9, 419, 13,
-  1495, 6, 110, 6, 6, 9, 4759, 9, 787719, 239,
+  1495, 6, 110, 6, 6, 9, 4759, 9, 787_719, 239,
 ];
 
 // This has a complexity linear to the value of the code. The
@@ -1247,7 +1247,7 @@ const astralIdentifierCodes = [
  * @param {Array<number>} set
  */
 function isInAstralSet(code, set) {
-  let pos = 0x10000;
+  let pos = 0x1_00_00;
   for (let i = 0; i < set.length; i += 2) {
     pos += set[i];
     if (pos > code) return false;
@@ -1268,7 +1268,7 @@ function isIdentifierStart(code, astral) {
   if (code < 91) return true;
   if (code < 97) return code === 95;
   if (code < 123) return true;
-  if (code <= 0xffff)
+  if (code <= 0xff_ff)
     return (
       code >= 0xaa && nonASCIIidentifierStart.test(String.fromCharCode(code))
     );
@@ -1289,7 +1289,7 @@ function isIdentifierChar(code, astral) {
   if (code < 91) return true;
   if (code < 97) return code === 95;
   if (code < 123) return true;
-  if (code <= 0xffff)
+  if (code <= 0xff_ff)
     return code >= 0xaa && nonASCIIidentifier.test(String.fromCharCode(code));
   if (astral === false) return false;
   return (
@@ -1323,7 +1323,7 @@ function identifier() {
  * @param {number} ch
  */
 function codePointLen(ch) {
-  if (ch < 0x10000) return 1;
+  if (ch < 0x1_00_00) return 1;
   return 2;
 }
 
@@ -1333,9 +1333,9 @@ function codePointLen(ch) {
 function codePointAtLast(bPos) {
   // Gives the UTF char for backtracking surrogates
   const ch = source.charCodeAt(bPos);
-  if ((ch & 0xfc00) === 0xdc00)
+  if ((ch & 0xfc_00) === 0xdc_00)
     return (
-      (((source.charCodeAt(bPos - 1) & 0x3ff) << 10) | (ch & 0x3ff)) + 0x10000
+      (((source.charCodeAt(bPos - 1) & 0x3_ff) << 10) | (ch & 0x3_ff)) + 0x1_00_00
     );
   return ch;
 }

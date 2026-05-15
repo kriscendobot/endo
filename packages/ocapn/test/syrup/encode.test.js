@@ -23,7 +23,7 @@ test('negative zero', t => {
 });
 
 test('invalid string characters', t => {
-  const invalidString = String.fromCharCode(0xd800);
+  const invalidString = String.fromCharCode(0xd8_00);
   throws(t, () => encodeSyrup(invalidString), {
     message: 'SyrupAnyCodec: write failed at index 0 of <unknown>',
     cause: {

@@ -10,8 +10,8 @@ const defaultCapacity = 256;
 
 // For strings, U+D800–U+DFFF are invalid.
 // See https://github.com/ocapn/ocapn/blob/main/draft-specifications/Model.md#string
-const INVALID_STRING_CHARS_START = 0xd800;
-const INVALID_STRING_CHARS_END = 0xdfff;
+const INVALID_STRING_CHARS_START = 0xd8_00;
+const INVALID_STRING_CHARS_END = 0xdf_ff;
 
 // const MINUS = '-'.charCodeAt(0);
 // const PLUS = '+'.charCodeAt(0);

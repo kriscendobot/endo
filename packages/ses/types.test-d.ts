@@ -136,8 +136,8 @@ assert.typeof(null, 'string', 10);
 assert.typeof(null, 'string', {});
 
 assert.string('i am a string');
-assert.string(0x535176, 'not a string');
-assert.string(0x535176, X`should have been a string ${10}`);
+assert.string(0x53_51_76, 'not a string');
+assert.string(0x53_51_76, X`should have been a string ${10}`);
 
 // ////////////////////////////////////////////////////////////////////////
 

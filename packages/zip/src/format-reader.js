@@ -54,8 +54,8 @@ import * as compression from './compression.js';
 // q, as in quote, for quoting strings in errors
 const q = JSON.stringify;
 
-const MAX_VALUE_16BITS = 65535;
-const MAX_VALUE_32BITS = 4294967295;
+const MAX_VALUE_16BITS = 65_535;
+const MAX_VALUE_32BITS = 4_294_967_295;
 
 const textDecoder = new TextDecoder();
 
@@ -64,7 +64,7 @@ const textDecoder = new TextDecoder();
  * @returns {boolean}
  */
 function isEncrypted(bitFlag) {
-  return (bitFlag & 0x0001) === 0x0001;
+  return (bitFlag & 0x00_01) === 0x00_01;
 }
 
 /**
@@ -385,7 +385,7 @@ function checkRecords(centralRecord, localRecord, archiveName) {
  * @param {number} externalFileAttributes
  */
 function modeForExternalAttributes(externalFileAttributes) {
-  return (externalFileAttributes >> 16) & 0xffff;
+  return (externalFileAttributes >> 16) & 0xff_ff;
 }
 
 /**
@@ -466,7 +466,7 @@ export function readZip(reader, name = '<unknown>') {
       throw Error('Encrypted zip are not supported');
     }
 
-    const isDir = (centralRecord.externalFileAttributes & 0x0010) !== 0;
+    const isDir = (centralRecord.externalFileAttributes & 0x00_10) !== 0;
     if (!isDir) {
       const compressedFile = recordToFile(centralRecord, localRecord);
       const decompressedFile = decompressFile(compressedFile);

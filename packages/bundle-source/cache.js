@@ -448,7 +448,7 @@ export const makeNodeBundleCache = async (
   ]);
 
   if (nonce === undefined) {
-    nonce = crypto.randomInt(0xffff_ffff);
+    nonce = crypto.randomInt(0xff_ff_ff_ff);
   }
 
   const readPowers = {
