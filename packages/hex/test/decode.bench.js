@@ -188,7 +188,9 @@ const pairMapTableDecode = (string, name = '<unknown>') => {
 const tableDecode = arrayTableDecode;
 
 // Deterministic PRNG, same seed shape as other Endo fuzz tests.
-const defaultSeed = [0xb0_b5_c0_ff, 0xee_fa_ca_de, 0xb0_b5_c0_ff, 0xee_fa_ca_de];
+const defaultSeed = [
+  0xb0_b5_c0_ff, 0xee_fa_ca_de, 0xb0_b5_c0_ff, 0xee_fa_ca_de,
+];
 const makeBytes = size => {
   const bytes = new Uint8Array(size);
   const prng = new XorShift(defaultSeed);

@@ -96,7 +96,9 @@ function fuzzySyrupable(budget, random) {
 
 // Chris Hibbert really wanted the default i to be Bob's Coffee Façade,
 // which is conveniently exactly 64 bits long.
-const defaultSeed = [0xb0_b5_c0_ff, 0xee_fa_ca_de, 0xb0_b5_c0_ff, 0xee_fa_ca_de];
+const defaultSeed = [
+  0xb0_b5_c0_ff, 0xee_fa_ca_de, 0xb0_b5_c0_ff, 0xee_fa_ca_de,
+];
 
 const prng = new XorShift(defaultSeed);
 const random = () => prng.random();
