@@ -11,4 +11,8 @@
 - Intended for testing interoperability with the OCapN
   TCP-for-testing protocol, which has moved to adopt this framing.
   The framing is among the protocols under consideration in the
-  OCapN pre-standards group at time of writing.
+  OCapN pre-standards group at time of writing; the 2025-12-09 OCapN
+  plenary recorded the consensus that the TCP-for-testing netlayer
+  should carry messages as length-prefixed Syrup byte strings
+  (https://github.com/ocapn/ocapn/blob/main/meeting-minutes/2025-12-09.md
+  and the parallel discussion on ocapn/ocapn#104).
