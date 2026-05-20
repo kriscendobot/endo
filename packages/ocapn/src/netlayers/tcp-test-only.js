@@ -5,7 +5,6 @@ import net from 'net';
 import harden from '@endo/harden';
 import { makePipe } from '@endo/stream';
 import { makeSyrupsReader } from '@endo/syrup-frame/reader.js';
-import { makeSyrupsWriter } from '@endo/syrup-frame/writer.js';
 
 import { locationToLocationId } from '../client/util.js';
 
@@ -37,6 +36,8 @@ import { locationToLocationId } from '../client/util.js';
  */
 
 const { isNaN } = Number;
+
+const textEncoder = new TextEncoder();
 
 /**
  * @param {Buffer} buffer
@@ -73,37 +74,27 @@ const makeSocketOperations = (socket, writeLatencyMs) => {
 
 /**
  * Wraps `socketOps` so that `write(bytes)` emits a syrups-framed
- * record (`<length>:<payload>`) instead of raw bytes. Uses the
- * `@endo/syrup-frame` writer over a tiny synchronous sink so framing
- * stays inline with the underlying socket write.
+ * record (`<length>:<payload>`) instead of raw bytes. Builds the
+ * length-prefixed buffer synchronously and forwards a single
+ * `socketOps.write` call, matching the synchronous shape of the
+ * `SocketOperations` interface. (The earlier indirection through
+ * `@endo/syrup-frame`'s async `Writer` over a microtask-resolving
+ * sink was a sync/async impedance mismatch: the returned promise was
+ * always discarded and any write error from the sink would have been
+ * silently swallowed. Socket-level errors surface through the
+ * `socket.on('error')` handler set up in `setupSocketHandlers`.)
  *
  * @param {SocketOperations} socketOps
  * @returns {SocketOperations}
  */
 const makeSyrupsWritingSocketOperations = socketOps => {
-  /** @type {import('@endo/stream').Writer<Uint8Array, undefined>} */
-  const sink = harden({
-    async next(bytes) {
-      socketOps.write(bytes);
-      return harden({ done: false, value: undefined });
-    },
-    async return() {
-      socketOps.end();
-      return harden({ done: true, value: undefined });
-    },
-    async throw(error) {
-      throw error;
-    },
-    [Symbol.asyncIterator]() {
-      return sink;
-    },
-  });
-  const syrupsWriter = makeSyrupsWriter(sink);
   return {
     write(bytes) {
-      // The writer's `next` resolves promptly because `sink.next`
-      // resolves on the next microtask; ignore the returned promise.
-      syrupsWriter.next(bytes).catch(() => {});
+      const prefix = textEncoder.encode(`${bytes.length}:`);
+      const frame = new Uint8Array(prefix.length + bytes.length);
+      frame.set(prefix, 0);
+      frame.set(bytes, prefix.length);
+      socketOps.write(frame);
     },
     end() {
       socketOps.end();
