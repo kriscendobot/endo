@@ -17,17 +17,21 @@ import { locationToLocationId } from '../client/util.js';
 /**
  * Wire framing for the test-only TCP netlayer.
  *
- * - `'none'` (default): each write is sent as raw bytes, and each
- *   `socket.on('data')` chunk is dispatched as a complete OCapN
- *   message. This matches the `ocapn/ocapn-test-suite` Python
- *   `testing_only_tcp` netlayer, which writes a syrup-encoded
- *   record with `sendall` and reads one back with
- *   `syrup.syrup_read` (no length prefix on the wire).
- * - `'syrups'`: each message is wrapped in the
+ * - `'syrups'` (default): each message is wrapped in the
  *   `<length>:<payload>` framing implemented by `@endo/syrup-frame`.
- *   Adds robustness against TCP chunk boundaries that split a
- *   single OCapN message and works with peers that opt in to the
- *   same framing.
+ *   Robust against TCP chunk boundaries that split a single OCapN
+ *   message; the spec is moving toward this framing for the
+ *   TCP-for-testing netlayer.
+ * - `'none'`: each write is sent as raw bytes, and each
+ *   `socket.on('data')` chunk is dispatched as a complete OCapN
+ *   message. Retained only for compatibility with the existing
+ *   `ocapn/ocapn-test-suite` Python `testing_only_tcp` netlayer,
+ *   which writes a syrup-encoded record with `sendall` and reads
+ *   one back with `syrup.syrup_read` (no length prefix on the wire).
+ *   That suite is known to be inadequate against the possibility of
+ *   a TCP chunk getting split across packets; the `'none'` option
+ *   goes away once the Python suite either adopts syrups framing or
+ *   is retired.
  *
  * @typedef {'none' | 'syrups'} TcpTestOnlyFraming
  */
@@ -187,7 +191,7 @@ const makeSyrupsDeframer = (logger, onFrame) => {
  * @param {string} [options.specifiedHostname]
  * @param {string} [options.specifiedDesignator]
  * @param {number} [options.writeLatencyMs] - Optional artificial latency for writes (ms), useful for testing pipelining
- * @param {TcpTestOnlyFraming} [options.framing] - Wire framing for outbound writes and inbound reads. Defaults to `'none'`, matching the Python `ocapn-test-suite` `testing_only_tcp` netlayer.
+ * @param {TcpTestOnlyFraming} [options.framing] - Wire framing for outbound writes and inbound reads. Defaults to `'syrups'`, the framing the OCapN TCP-for-testing netlayer is moving toward. Pass `'none'` to interoperate with the existing Python `ocapn-test-suite` `testing_only_tcp` netlayer (raw syrup record per write, no length prefix).
  * @returns {Promise<TcpTestOnlyNetLayer>}
  */
 export const makeTcpNetLayer = async ({
@@ -198,7 +202,7 @@ export const makeTcpNetLayer = async ({
   // Unclear if a fallback value is reasonable.
   specifiedDesignator = '0000',
   writeLatencyMs = 0,
-  framing = 'none',
+  framing = 'syrups',
 }) => {
   if (framing !== 'none' && framing !== 'syrups') {
     throw Error(`Unsupported framing: ${framing}`);
@@ -324,6 +328,10 @@ export const makeTcpNetLayer = async ({
     if (framing === 'syrups') {
       return makeSyrupsWritingSocketOperations(rawOps);
     }
+    // `'none'` framing is retained only for the existing Python
+    // `ocapn-test-suite` `testing_only_tcp` netlayer, which is
+    // inadequate against TCP chunks split across packets. See the
+    // `TcpTestOnlyFraming` typedef.
     return rawOps;
   };
 
