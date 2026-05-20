@@ -60,7 +60,7 @@ jobs:
         run: yarn lint
 
       - name: Check package uniformity
-        run: bash scripts/check-package-uniformity.sh
+        run: node scripts/check-package-uniformity.mjs
 
       # build the API docs to verify it works
       - name: build API docs
