@@ -57,6 +57,9 @@
       "path": "packages/exo/tsconfig.composite.json"
     },
     {
+      "path": "packages/exo-stream/tsconfig.composite.json"
+    },
+    {
       "path": "packages/far/tsconfig.composite.json"
     },
     {
