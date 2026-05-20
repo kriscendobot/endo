@@ -1,5 +1,19 @@
 # @endo/compartment-mapper
 
+## 2.2.0
+
+### Minor Changes
+
+- [#3150](https://github.com/endojs/endo/pull/3150) [`75253ad`](https://github.com/endojs/endo/commit/75253ad65745c308e3171d0345860c5b36d9c5e4) Thanks [@boneskull](https://github.com/boneskull)! - This adds a new option, `additionalLocations`, to `mapNodeModules`. This option enables addition of arbitrary packages to the resulting Compartment Map. It enables execution of packages which need to dynamically load files from Compartments which would otherwise not appear in the map. Specific use-cases include tooling like Webpack and ESLint.
+
+### Patch Changes
+
+- [#3201](https://github.com/endojs/endo/pull/3201) [`67ed1ce`](https://github.com/endojs/endo/commit/67ed1ce31b70126201756f7a3a54e1450a709665) Thanks [@boneskull](https://github.com/boneskull)! - Compatibility fix for passthrough-style wildcards in subpath exports.
+
+- Updated dependencies [[`ad7a177`](https://github.com/endojs/endo/commit/ad7a177e84b08c74526ceb9b0ea15f3c81c06158), [`fa0b6a9`](https://github.com/endojs/endo/commit/fa0b6a9ad57c0791b314d233b7962ca860977216), [`459347b`](https://github.com/endojs/endo/commit/459347b34b8b5d5adfac9def8cee035b6cfa42d7)]:
+  - @endo/hex@1.1.0
+  - ses@2.0.1
+
 ## 2.1.0
 
 ### Minor Changes
