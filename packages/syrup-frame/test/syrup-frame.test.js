@@ -353,10 +353,6 @@ test('writer is its own async iterator', t => {
   t.is(writer[Symbol.asyncIterator](), writer);
 });
 
-// -- Adversarial / boundary tests -----------------------------------
-// Each test below names the invariant being attacked and asserts the
-// specific outcome the contract claims.
-
 // maxMessageLength is the upper bound; a payload of exactly that length
 // must round-trip without error.  Catches an off-by-one in either the
 // prefix-length cap or the message-length cap.
