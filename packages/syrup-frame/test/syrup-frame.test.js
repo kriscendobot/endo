@@ -127,6 +127,13 @@ function delay(ms) {
   });
 }
 
+// TODO refactor: when `@endo/stream` gains a `mapReader` (or similar)
+// helper that can capture a snapshot of each yielded chunk, replace
+// `makeArrayWriter` with `makePipe()` + the mapped reader so the
+// writer-to-reader bridge is the same shape these tests would
+// actually use in production. Per kriskowal review on PR #109; the
+// same opportunity exists in the sibling `cbor-frame` test suite,
+// where the TODO landed under PR #288.
 const makeArrayWriter = opts => {
   const array = [];
   const writer = makeSyrupsWriter(
