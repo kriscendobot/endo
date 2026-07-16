@@ -35,6 +35,26 @@ test('analyze exported quoted identifier to identifier', t => {
   t.deepEqual(reexports, []);
 });
 
+test('analyze quoted and escaped export names', t => {
+  const { exports, reexports } = analyzeCommonJS(`
+    module.exports = { 'ab cd': value };
+    exports['\\u{D83C}\\u{DF10}'] = value;
+    exports['\\n'] = value;
+    Object.defineProperty(exports, '%notidentifier', { value: value });
+    exports.package = value;
+    exports.var = value;
+  `);
+  t.deepEqual(exports, [
+    'ab cd',
+    '🌐',
+    '\n',
+    '%notidentifier',
+    'package',
+    'var',
+  ]);
+  t.deepEqual(reexports, []);
+});
+
 test('analyze mix of quoted and unquoted destructed identifiers', t => {
   const { exports, reexports } = analyzeCommonJS(`
     function a() {}
