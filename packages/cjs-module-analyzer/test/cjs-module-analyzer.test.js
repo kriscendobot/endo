@@ -35,6 +35,26 @@ test('analyze exported quoted identifier to identifier', t => {
   t.deepEqual(reexports, []);
 });
 
+test('analyze quoted and escaped export names', t => {
+  const { exports, reexports } = analyzeCommonJS(`
+    module.exports = { 'ab cd': value };
+    exports['\\u{D83C}\\u{DF10}'] = value;
+    exports['\\n'] = value;
+    Object.defineProperty(exports, '%notidentifier', { value: value });
+    exports.package = value;
+    exports.var = value;
+  `);
+  t.deepEqual(exports, [
+    'ab cd',
+    '🌐',
+    '\n',
+    '%notidentifier',
+    'package',
+    'var',
+  ]);
+  t.deepEqual(reexports, []);
+});
+
 test('analyze mix of quoted and unquoted destructed identifiers', t => {
   const { exports, reexports } = analyzeCommonJS(`
     function a() {}
@@ -455,11 +475,11 @@ test('Identify some invalid require calls as a side effect', t => {
   t.deepEqual(requires, ['a', './a']);
 });
 
-test('invalid exports cases', t => {
+test('nonidentifier export names', t => {
   const { exports } = analyzeCommonJS(`
     module.exports['?invalid'] = 'asdf';
   `);
-  t.is(exports.length, 0);
+  t.deepEqual(exports, ['?invalid']);
 });
 
 test('module exports reexport spread', t => {
@@ -568,8 +588,13 @@ test('identifiers', t => {
     exports['α'] = 54;
     exports.package = 'RESERVED!';
   `);
-  t.is(exports.length, 1);
-  t.is(exports[0], 'α');
+  t.deepEqual(exports, [
+    'not identifier',
+    '@notidentifier',
+    '⨉',
+    'α',
+    'package',
+  ]);
 });
 
 test('Literal exports', t => {
