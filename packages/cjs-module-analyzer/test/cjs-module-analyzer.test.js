@@ -475,11 +475,11 @@ test('Identify some invalid require calls as a side effect', t => {
   t.deepEqual(requires, ['a', './a']);
 });
 
-test('invalid exports cases', t => {
+test('nonidentifier export names', t => {
   const { exports } = analyzeCommonJS(`
     module.exports['?invalid'] = 'asdf';
   `);
-  t.is(exports.length, 0);
+  t.deepEqual(exports, ['?invalid']);
 });
 
 test('module exports reexport spread', t => {
@@ -588,8 +588,13 @@ test('identifiers', t => {
     exports['α'] = 54;
     exports.package = 'RESERVED!';
   `);
-  t.is(exports.length, 1);
-  t.is(exports[0], 'α');
+  t.deepEqual(exports, [
+    'not identifier',
+    '@notidentifier',
+    '⨉',
+    'α',
+    'package',
+  ]);
 });
 
 test('Literal exports', t => {

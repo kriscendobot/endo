@@ -1086,7 +1086,7 @@ function tryParseLiteralExports() {
   const revertPos = pos - 1;
   while (pos++ < end) {
     let ch = commentWhitespace();
-    let startPos = pos;
+    const startPos = pos;
     if (identifier()) {
       const endPos = pos;
       ch = commentWhitespace();
@@ -1639,6 +1639,7 @@ function scanOctalEscapeSequence(character, stringLiteral, index) {
  * @param {string | undefined} character
  */
 function readHex(character) {
+  if (character === undefined) throw SyntaxError('Invalid hexadecimal escape.');
   if (character >= '0' && character <= '9') return Number(character);
   if (character >= 'a' && character <= 'f') return character.charCodeAt(0) - 87;
   if (character >= 'A' && character <= 'F') return character.charCodeAt(0) - 55;
