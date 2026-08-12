@@ -1019,53 +1019,132 @@ const makeDaemonCore = async (
 
   const provideRemoteControl = makeRemoteControlProvider(localNodeNumber);
 
-  // Gateway is equivalent to E's "nonce locator".
-  // It provides a value for a locator to a remote client.
-  const localGateway = Far('Gateway', {
-    /** @param {string} requestedId */
-    provide: async requestedId => {
-      assertValidId(requestedId);
-      if (!isLocalId(requestedId)) {
-        const { node } = parseId(requestedId);
-        throw new Error(
-          `Gateway can only provide local values. Got request for node ${q(
-            node,
-          )}`,
-        );
+  // Gateway is equivalent to E's "nonce locator".  It provides a value for a
+  // locator to a remote client.
+  //
+  // The gateway's read method `provide` is a bearer capability: it answers only
+  // for a caller that already holds the secret formula id it names, and it
+  // enumerates nothing.  `followRetentionSet` is the one method that *reveals*
+  // formula numbers, so it is the one that can destroy that secrecy, and it
+  // must never reveal the local node's own formula index — the very secret that
+  // keeps `provide` safe.  Two invariants enforce that:
+  //   1. A gateway handed to an authenticated peer (`makeGatewayForPeer`, via
+  //      the `hello` greeter) answers `followRetentionSet` only for the node
+  //      that peer authenticated as — never another peer's node, never the
+  //      local node.
+  //   2. The shared `localGateway` (presented on outbound and loopback
+  //      connections, which do not authenticate a single peer in-band) refuses
+  //      to enumerate the local node's index outright.  No legitimate caller
+  //      ever follows the local node's own retention set — a node never peers
+  //      with itself — so this breaks nothing while closing the path that does
+  //      not flow through `hello`.
+
+  /** @param {string} requestedId */
+  const gatewayProvide = async requestedId => {
+    assertValidId(requestedId);
+    if (!isLocalId(requestedId)) {
+      const { node } = parseId(requestedId);
+      throw new Error(
+        `Gateway can only provide local values. Got request for node ${q(
+          node,
+        )}`,
+      );
+    }
+    return provide(requestedId);
+  };
+
+  /**
+   * Build the retention-set follower for `peerNodeNumber`: the formula numbers
+   * from that node this daemon currently holds, followed by incremental
+   * updates. Each yielded value has shape `{ add: string[], remove: string[] }`;
+   * the first delta is the snapshot (all adds, no removes) and subsequent
+   * deltas are batched over microtasks.
+   *
+   * The caller authorizes `peerNodeNumber` before calling this (see the
+   * gateways below): it must be the node the connection authenticated, and
+   * never the local node — otherwise the local formula index leaks.
+   *
+   * @param {string} peerNodeNumber
+   * @returns {FarRef<AsyncIterableIterator<import('./retention-accumulator.js').RetentionDelta>>}
+   */
+  const makeRetentionSetFollower = peerNodeNumber => {
+    const snapshot =
+      persistencePowers.listFormulaNumbersByNode(peerNodeNumber);
+    const accumulator = makeRetentionAccumulator({ snapshot });
+
+    // Feed formula change events into the accumulator, filtered
+    // by the peer's node number.
+    const subscription = formulaChangeTopic.subscribe();
+    (async () => {
+      for await (const change of subscription) {
+        if (change.node === peerNodeNumber) {
+          if (change.add !== undefined) {
+            accumulator.add(change.add);
+          } else if (change.remove !== undefined) {
+            accumulator.remove(change.remove);
+          }
+        }
       }
-      return provide(requestedId);
-    },
+    })();
+
+    return makeIteratorRef(accumulator.subscribe());
+  };
+
+  /**
+   * A gateway bound to the node identity a connection authenticated. Its
+   * `followRetentionSet` answers only for `boundNodeNumber` — the peer that
+   * authenticated over this connection — so it can never be used to enumerate
+   * another node's set, and in particular never the local node's (a peer's node
+   * is never the local node). This is the gateway the `hello` greeter hands
+   * back to an inbound peer.
+   *
+   * @param {string} boundNodeNumber
+   */
+  const makeGatewayForPeer = boundNodeNumber =>
+    Far('Gateway', {
+      provide: gatewayProvide,
+      /**
+       * @param {string} peerNodeNumber
+       * @returns {Promise<FarRef<AsyncIterableIterator<import('./retention-accumulator.js').RetentionDelta>>>}
+       */
+      followRetentionSet: async peerNodeNumber => {
+        assertNodeNumber(peerNodeNumber);
+        // A peer may follow only its own node's retention set. Any other node
+        // number — including the local node — is refused, so a caller can never
+        // enumerate a node it did not authenticate as.
+        if (
+          peerNodeNumber === localNodeNumber ||
+          peerNodeNumber !== boundNodeNumber
+        ) {
+          throw new Error(
+            'followRetentionSet is restricted to the authenticated peer node',
+          );
+        }
+        return makeRetentionSetFollower(peerNodeNumber);
+      },
+    });
+
+  const localGateway = Far('Gateway', {
+    provide: gatewayProvide,
     /**
      * Return the formula numbers from `peerNodeNumber` that this
      * daemon currently holds, followed by incremental updates.
-     * Each yielded value has shape `{ add: string[], remove: string[] }`.
-     * The first delta is the snapshot (all adds, no removes).
-     * Subsequent deltas are batched over microtasks.
      *
      * @param {string} peerNodeNumber
      * @returns {Promise<FarRef<AsyncIterableIterator<import('./retention-accumulator.js').RetentionDelta>>>}
      */
     followRetentionSet: async peerNodeNumber => {
-      const snapshot =
-        persistencePowers.listFormulaNumbersByNode(peerNodeNumber);
-      const accumulator = makeRetentionAccumulator({ snapshot });
-
-      // Feed formula change events into the accumulator, filtered
-      // by the peer's node number.
-      const subscription = formulaChangeTopic.subscribe();
-      (async () => {
-        for await (const change of subscription) {
-          if (change.node === peerNodeNumber) {
-            if (change.add !== undefined) {
-              accumulator.add(change.add);
-            } else if (change.remove !== undefined) {
-              accumulator.remove(change.remove);
-            }
-          }
-        }
-      })();
-
-      return makeIteratorRef(accumulator.subscribe());
+      assertNodeNumber(peerNodeNumber);
+      // The local node's formula index is never externally enumerable. A peer
+      // legitimately follows only its own (remote) node's set; answering for
+      // the local node would hand out every local formula number, which is the
+      // secret that keeps `provide` safe.
+      if (peerNodeNumber === localNodeNumber) {
+        throw new Error(
+          'followRetentionSet will not enumerate the local node formula index',
+        );
+      }
+      return makeRetentionSetFollower(peerNodeNumber);
     },
   });
 
@@ -1159,7 +1238,10 @@ const makeDaemonCore = async (
         );
       });
 
-      return localGateway;
+      // Hand back a gateway bound to this authenticated peer, so the peer can
+      // follow only its own retention set — never the local node's formula
+      // index, and never another peer's. See makeGatewayForPeer.
+      return makeGatewayForPeer(remoteNodeId);
     },
   });
 
