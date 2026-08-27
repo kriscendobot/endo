@@ -84,7 +84,10 @@ jobs:
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
-          node-version: ${{ matrix.node-version }}
+          # Node 24.19.0 regressed native-addon cleanup during worker teardown.
+          # Keep the check name on the 24.x support line while using the last
+          # unaffected patch until the upstream fix is released on Node 24.
+          node-version: ${{ matrix.node-version == '24.x' && '24.18.1' || matrix.node-version }}
           cache: yarn
 
       # Some tests (e.g., in package "daemon") create Unix domain sockets, and
