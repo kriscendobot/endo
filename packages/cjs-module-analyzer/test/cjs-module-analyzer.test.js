@@ -481,7 +481,7 @@ test('escape sequences in quoted export names', t => {
       `exports['\\x41\\v\\b\\f\\t\\r'] = 1;`,
       `exports["\\x42\\q"] = 1;`,
       `exports['\\101\\0\\377\\456\\8'] = 1;`,
-      `exports['a\\\nb\\\r\nc\\ d'] = 1;`,
+      `exports['a\\\nb\\\r\nc\\\u2028d'] = 1;`,
       `exports['q"\\u0041\\u{43}'] = 1;`,
       `exports['\\u{110000}'] = 1;`,
       `exports['\\xZZ'] = 1;`,
