@@ -86,7 +86,7 @@ function addExport(name) {
 
 /**
  * Reads the quoted string at the current position and advances through its
- * closing quote.
+ * closing quote. Callers must ensure the current character is a quote.
  *
  * @returns {string | undefined}
  */
@@ -95,10 +95,8 @@ function readStringLiteral() {
   const quote = source.charCodeAt(pos);
   if (quote === 39 /* ' */) {
     singleQuoteString();
-  } else if (quote === 34 /* " */) {
-    doubleQuoteString();
   } else {
-    return undefined;
+    doubleQuoteString();
   }
   return decodeStringLiteral(source.slice(startPos, pos + 1));
 }

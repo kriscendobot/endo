@@ -475,6 +475,28 @@ test('Identify some invalid require calls as a side effect', t => {
   t.deepEqual(requires, ['a', './a']);
 });
 
+test('escape sequences in quoted export names', t => {
+  const { exports } = analyzeCommonJS(
+    [
+      `exports['\\x41\\v\\b\\f\\t\\r'] = 1;`,
+      `exports["\\x42\\q"] = 1;`,
+      `exports['\\101\\0\\377\\456\\8'] = 1;`,
+      `exports['a\\\nb\\\r\nc\\ d'] = 1;`,
+      `exports['q"\\u0041\\u{43}'] = 1;`,
+      `exports['\\u{110000}'] = 1;`,
+      `exports['\\xZZ'] = 1;`,
+      `exports['\\uABCG'] = 1;`,
+    ].join('\n'),
+  );
+  t.deepEqual(exports, [
+    'A\v\b\f\t\r',
+    'Bq',
+    'A\u0000\u00ff%68',
+    'abcd',
+    'q"AC',
+  ]);
+});
+
 test('nonidentifier export names', t => {
   const { exports } = analyzeCommonJS(`
     module.exports['?invalid'] = 'asdf';
