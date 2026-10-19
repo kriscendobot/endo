@@ -497,6 +497,20 @@ test('escape sequences in quoted export names', t => {
   ]);
 });
 
+test('export names with lone surrogates are dropped', t => {
+  const { exports } = analyzeCommonJS(
+    [
+      `exports['\\uD800'] = 1;`,
+      `exports["\\u{DC00}"] = 1;`,
+      `exports["\\uDF10x"] = 1;`,
+      `exports['\\uD83Cx'] = 1;`,
+      `module.exports = { '\\uD83C': a };`,
+      `exports['\\uD83C\\uDF10'] = 1;`,
+    ].join('\n'),
+  );
+  t.deepEqual(exports, ['\u{1F310}']);
+});
+
 test('nonidentifier export names', t => {
   const { exports } = analyzeCommonJS(`
     module.exports['?invalid'] = 'asdf';

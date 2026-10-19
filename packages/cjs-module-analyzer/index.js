@@ -85,7 +85,7 @@ function addExport(name) {
 }
 
 /**
- * Reads the quoted string at the current position and advances through its
+ * Reads the quoted string at the current position and leaves `pos` at its
  * closing quote. Callers must ensure the current character is a quote.
  *
  * @returns {string | undefined}
@@ -1467,10 +1467,42 @@ function doubleQuoteString() {
 }
 
 /**
+ * Reports whether a string is well-formed UTF-16, with every surrogate in a
+ * pair. Module export names must be well-formed (IsStringWellFormedUnicode).
+ *
+ * @param {string} string
+ */
+function isWellFormedString(string) {
+  for (let i = 0; i < string.length; i += 1) {
+    const surrogatePrefix = string.charCodeAt(i) & 0xfc00;
+    if (surrogatePrefix === 0xd800) {
+      i += 1;
+      if ((string.charCodeAt(i) & 0xfc00) !== 0xdc00) return false;
+    } else if (surrogatePrefix === 0xdc00) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Decodes a quoted string literal, returning undefined if it is invalid or
+ * decodes to a string that is not well-formed UTF-16.
+ *
  * @param {string} stringLiteral
  * @returns {string | undefined}
  */
 function decodeStringLiteral(stringLiteral) {
+  const decoded = decodeStringLiteralUnchecked(stringLiteral);
+  if (decoded === undefined || !isWellFormedString(decoded)) return undefined;
+  return decoded;
+}
+
+/**
+ * @param {string} stringLiteral
+ * @returns {string | undefined}
+ */
+function decodeStringLiteralUnchecked(stringLiteral) {
   try {
     if (stringLiteral[0] === '"') return JSON.parse(stringLiteral);
   } catch {
