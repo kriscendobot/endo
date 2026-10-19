@@ -69,7 +69,9 @@ export function analyzeCommonJS(cjsSource, name = '<unknown>') {
     throw err;
   }
   const result = {
-    exports: [...myexports].filter(expt => !unsafeGetters.has(expt)),
+    exports: [...myexports].filter(
+      exportName => !unsafeGetters.has(exportName),
+    ),
     reexports: [...reexports],
     requires,
   };
@@ -400,7 +402,7 @@ function tryParseObjectDefineOrKeys(keys) {
     pos++;
     ch = commentWhitespace();
     if (ch === 100 /* d */ && source.startsWith('efineProperty', pos + 1)) {
-      let expt;
+      let exportName;
       for (;;) {
         pos += 14;
         revertPos = pos - 1;
@@ -414,8 +416,8 @@ function tryParseObjectDefineOrKeys(keys) {
         pos++;
         ch = commentWhitespace();
         if (ch !== 39 /* ' */ && ch !== 34 /* " */) break;
-        expt = readStringLiteral();
-        if (expt === undefined) break;
+        exportName = readStringLiteral();
+        if (exportName === undefined) break;
         pos++;
         ch = commentWhitespace();
         if (ch !== 44 /* , */) break;
@@ -443,7 +445,7 @@ function tryParseObjectDefineOrKeys(keys) {
           pos += 5;
           ch = commentWhitespace();
           if (ch !== 58 /*:*/) break;
-          addExport(expt);
+          addExport(exportName);
           pos = revertPos;
           return;
         } else if (ch === 103 /* g */) {
@@ -508,13 +510,13 @@ function tryParseObjectDefineOrKeys(keys) {
           pos++;
           ch = commentWhitespace();
           if (ch !== 41 /* ) */) break;
-          addExport(expt);
+          addExport(exportName);
           return;
         }
         break;
       }
-      if (expt) {
-        unsafeGetters.add(expt);
+      if (exportName !== undefined) {
+        unsafeGetters.add(exportName);
       }
     } else if (
       keys &&
@@ -979,15 +981,15 @@ function tryParseExportsDotAssign(assign) {
       pos++;
       ch = commentWhitespace();
       if (ch === 39 /* ' */ || ch === 34 /* " */) {
-        const expt = readStringLiteral();
-        if (expt === undefined) break;
+        const exportName = readStringLiteral();
+        if (exportName === undefined) break;
         pos++;
         ch = commentWhitespace();
         if (ch !== 93 /* ] */) break;
         pos++;
         ch = commentWhitespace();
         if (ch !== 61 /*=*/) break;
-        addExport(expt);
+        addExport(exportName);
       }
       break;
     }
@@ -1112,11 +1114,8 @@ function tryParseLiteralExports() {
       }
       ch = commentWhitespace();
     } else if (ch === 39 /* ' */ || ch === 34 /* " */) {
-      const expt = readStringLiteral();
-      if (expt === undefined) {
-        pos = revertPos;
-        return;
-      }
+      // An undecodable name is skipped, not fatal, so later keys survive.
+      const exportName = readStringLiteral();
       pos++;
       ch = commentWhitespace();
       if (ch === 58 /*:*/) {
@@ -1128,7 +1127,7 @@ function tryParseLiteralExports() {
           return;
         }
         ch = source.charCodeAt(pos);
-        addExport(expt);
+        if (exportName !== undefined) addExport(exportName);
       }
     } else {
       pos = revertPos;
@@ -1469,6 +1468,8 @@ function doubleQuoteString() {
 /**
  * Reports whether a string is well-formed UTF-16, with every surrogate in a
  * pair. Module export names must be well-formed (IsStringWellFormedUnicode).
+ * Stands in for ES2024 `String.prototype.isWellFormed`, which older supported
+ * engines lack.
  *
  * @param {string} string
  */
@@ -1504,25 +1505,10 @@ function decodeStringLiteral(stringLiteral) {
  */
 function decodeStringLiteralUnchecked(stringLiteral) {
   try {
-    if (stringLiteral[0] === '"') return JSON.parse(stringLiteral);
-  } catch {
-    // Some JavaScript string literals are not JSON strings.
-  }
-  try {
-    if (
-      stringLiteral[0] === "'" &&
-      stringLiteral.length > 1 &&
-      stringLiteral.at(-1) === "'" &&
-      !stringLiteral.includes('"')
-    ) {
-      return JSON.parse(`"${stringLiteral.slice(1, -1)}"`);
-    }
-  } catch {
-    // Some single-quoted JavaScript strings are not JSON strings.
-  }
-  try {
     return scanStringLiteral(stringLiteral);
-  } catch {
+  } catch (error) {
+    // The scanner signals an invalid literal only with SyntaxError.
+    if (!(error instanceof SyntaxError)) throw error;
     return undefined;
   }
 }
@@ -1657,7 +1643,13 @@ function scanOctalEscapeSequence(character, stringLiteral, index) {
   let value = Number(character);
   while (remaining > 0) {
     const nextCharacter = stringLiteral[index];
-    if (nextCharacter < '0' || nextCharacter > '7') break;
+    if (
+      nextCharacter === undefined ||
+      nextCharacter < '0' ||
+      nextCharacter > '7'
+    ) {
+      break;
+    }
     value = value * 8 + Number(nextCharacter);
     index++;
     remaining--;

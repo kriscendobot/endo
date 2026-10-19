@@ -41,6 +41,7 @@ test('analyze quoted and escaped export names', t => {
     exports['\\u{D83C}\\u{DF10}'] = value;
     exports['\\n'] = value;
     Object.defineProperty(exports, '%notidentifier', { value: value });
+    Object.defineProperty(exports, '\\u0062', { value: value });
     exports.package = value;
     exports.var = value;
   `);
@@ -49,6 +50,7 @@ test('analyze quoted and escaped export names', t => {
     '🌐',
     '\n',
     '%notidentifier',
+    'b',
     'package',
     'var',
   ]);
@@ -505,10 +507,28 @@ test('export names with lone surrogates are dropped', t => {
       `exports["\\uDF10x"] = 1;`,
       `exports['\\uD83Cx'] = 1;`,
       `module.exports = { '\\uD83C': a };`,
+      `Object.defineProperty(exports, '\\uDC00', { value: value });`,
       `exports['\\uD83C\\uDF10'] = 1;`,
+      `exports['\\uD7FF\\uE000\\uFFFF'] = 1;`,
     ].join('\n'),
   );
-  t.deepEqual(exports, ['\u{1F310}']);
+  t.deepEqual(exports, ['\u{1F310}', '\uD7FF\uE000\uFFFF']);
+});
+
+test('a lone-surrogate key does not drop sibling literal exports', t => {
+  const { exports } = analyzeCommonJS(
+    `module.exports = { 'ok': a, '\\uD800': a, b: b, c };`,
+  );
+  t.deepEqual(exports, ['ok', 'b', 'c']);
+});
+
+test('empty export names', t => {
+  t.deepEqual(analyzeCommonJS(`exports[''] = 1;`).exports, ['']);
+  const { exports } = analyzeCommonJS(`
+    exports[''] = 1;
+    Object.defineProperty(exports, '', { get() { return evil(); } });
+  `);
+  t.deepEqual(exports, []);
 });
 
 test('nonidentifier export names', t => {
