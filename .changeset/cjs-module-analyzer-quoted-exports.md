@@ -1,5 +1,6 @@
 ---
 '@endo/cjs-module-analyzer': minor
+'@endo/compartment-mapper': patch
 ---
 
 Synchronize quoted export-name handling with upstream `cjs-module-lexer` 2.2.0.
