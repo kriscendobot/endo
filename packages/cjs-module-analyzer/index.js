@@ -52,19 +52,6 @@ const Import = 0;
 const ExportAssign = 1;
 const ExportStar = 2;
 
-const strictReserved = new Set([
-  'implements',
-  'interface',
-  'let',
-  'package',
-  'private',
-  'protected',
-  'public',
-  'static',
-  'yield',
-  'enum',
-]);
-
 /**
  * @param {string} cjsSource
  * @param {string} [name]
@@ -82,7 +69,9 @@ export function analyzeCommonJS(cjsSource, name = '<unknown>') {
     throw err;
   }
   const result = {
-    exports: [...myexports].filter(expt => !unsafeGetters.has(expt)),
+    exports: [...myexports].filter(
+      exportName => !unsafeGetters.has(exportName),
+    ),
     reexports: [...reexports],
     requires,
   };
@@ -94,7 +83,24 @@ export function analyzeCommonJS(cjsSource, name = '<unknown>') {
  * @param {string} name
  */
 function addExport(name) {
-  if (!strictReserved.has(name)) myexports.add(name);
+  myexports.add(name);
+}
+
+/**
+ * Reads the quoted string at the current position and leaves `pos` at its
+ * closing quote. Callers must ensure the current character is a quote.
+ *
+ * @returns {string | undefined}
+ */
+function readStringLiteral() {
+  const startPos = pos;
+  const quote = source.charCodeAt(pos);
+  if (quote === 39 /* ' */) {
+    singleQuoteString();
+  } else {
+    doubleQuoteString();
+  }
+  return decodeStringLiteral(source.slice(startPos, pos + 1));
 }
 
 /**
@@ -396,7 +402,7 @@ function tryParseObjectDefineOrKeys(keys) {
     pos++;
     ch = commentWhitespace();
     if (ch === 100 /* d */ && source.startsWith('efineProperty', pos + 1)) {
-      let expt;
+      let exportName;
       for (;;) {
         pos += 14;
         revertPos = pos - 1;
@@ -410,10 +416,8 @@ function tryParseObjectDefineOrKeys(keys) {
         pos++;
         ch = commentWhitespace();
         if (ch !== 39 /* ' */ && ch !== 34 /* " */) break;
-        const quot = ch;
-        const exportPos = ++pos;
-        if (!identifier() || source.charCodeAt(pos) !== quot) break;
-        expt = source.slice(exportPos, pos);
+        exportName = readStringLiteral();
+        if (exportName === undefined) break;
         pos++;
         ch = commentWhitespace();
         if (ch !== 44 /* , */) break;
@@ -441,7 +445,7 @@ function tryParseObjectDefineOrKeys(keys) {
           pos += 5;
           ch = commentWhitespace();
           if (ch !== 58 /*:*/) break;
-          addExport(expt);
+          addExport(exportName);
           pos = revertPos;
           return;
         } else if (ch === 103 /* g */) {
@@ -506,13 +510,13 @@ function tryParseObjectDefineOrKeys(keys) {
           pos++;
           ch = commentWhitespace();
           if (ch !== 41 /* ) */) break;
-          addExport(expt);
+          addExport(exportName);
           return;
         }
         break;
       }
-      if (expt) {
-        unsafeGetters.add(expt);
+      if (exportName !== undefined) {
+        unsafeGetters.add(exportName);
       }
     } else if (
       keys &&
@@ -977,17 +981,15 @@ function tryParseExportsDotAssign(assign) {
       pos++;
       ch = commentWhitespace();
       if (ch === 39 /* ' */ || ch === 34 /* " */) {
+        const exportName = readStringLiteral();
+        if (exportName === undefined) break;
         pos++;
-        const startPos = pos;
-        if (identifier() && source.charCodeAt(pos) === ch) {
-          const endPos = pos++;
-          ch = commentWhitespace();
-          if (ch !== 93 /* ] */) break;
-          pos++;
-          ch = commentWhitespace();
-          if (ch !== 61 /*=*/) break;
-          addExport(source.slice(startPos, endPos));
-        }
+        ch = commentWhitespace();
+        if (ch !== 93 /* ] */) break;
+        pos++;
+        ch = commentWhitespace();
+        if (ch !== 61 /*=*/) break;
+        addExport(exportName);
       }
       break;
     }
@@ -1084,7 +1086,7 @@ function tryParseLiteralExports() {
   const revertPos = pos - 1;
   while (pos++ < end) {
     let ch = commentWhitespace();
-    let startPos = pos;
+    const startPos = pos;
     if (identifier()) {
       const endPos = pos;
       ch = commentWhitespace();
@@ -1112,21 +1114,20 @@ function tryParseLiteralExports() {
       }
       ch = commentWhitespace();
     } else if (ch === 39 /* ' */ || ch === 34 /* " */) {
-      startPos = ++pos;
-      if (identifier() && source.charCodeAt(pos) === ch) {
-        const endPos = pos++;
+      // An undecodable name is skipped, not fatal, so later keys survive.
+      const exportName = readStringLiteral();
+      pos++;
+      ch = commentWhitespace();
+      if (ch === 58 /*:*/) {
+        pos++;
         ch = commentWhitespace();
-        if (ch === 58 /*:*/) {
-          pos++;
-          ch = commentWhitespace();
-          // nothing more complex than identifier expressions for now
-          if (!identifier()) {
-            pos = revertPos;
-            return;
-          }
-          ch = source.charCodeAt(pos);
-          addExport(source.slice(startPos, endPos));
+        // nothing more complex than identifier expressions for now
+        if (!identifier()) {
+          pos = revertPos;
+          return;
         }
+        ch = source.charCodeAt(pos);
+        if (exportName !== undefined) addExport(exportName);
       }
     } else {
       pos = revertPos;
@@ -1462,6 +1463,209 @@ function doubleQuoteString() {
     } else if (isBr(ch)) break;
   }
   throw Error('Unterminated string.');
+}
+
+/**
+ * Reports whether a string is well-formed UTF-16, with every surrogate in a
+ * pair. Module export names must be well-formed (IsStringWellFormedUnicode).
+ * Stands in for ES2024 `String.prototype.isWellFormed`, which older supported
+ * engines lack.
+ *
+ * @param {string} string
+ */
+function isWellFormedString(string) {
+  for (let i = 0; i < string.length; i += 1) {
+    const surrogatePrefix = string.charCodeAt(i) & 0xfc00;
+    if (surrogatePrefix === 0xd800) {
+      i += 1;
+      if ((string.charCodeAt(i) & 0xfc00) !== 0xdc00) return false;
+    } else if (surrogatePrefix === 0xdc00) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Decodes a quoted string literal, returning undefined if it is invalid or
+ * decodes to a string that is not well-formed UTF-16.
+ *
+ * @param {string} stringLiteral
+ * @returns {string | undefined}
+ */
+function decodeStringLiteral(stringLiteral) {
+  const decoded = decodeStringLiteralUnchecked(stringLiteral);
+  if (decoded === undefined || !isWellFormedString(decoded)) return undefined;
+  return decoded;
+}
+
+/**
+ * @param {string} stringLiteral
+ * @returns {string | undefined}
+ */
+function decodeStringLiteralUnchecked(stringLiteral) {
+  try {
+    return scanStringLiteral(stringLiteral);
+  } catch (error) {
+    // The scanner signals an invalid literal only with SyntaxError.
+    if (!(error instanceof SyntaxError)) throw error;
+    return undefined;
+  }
+}
+
+/**
+ * @param {string} stringLiteral
+ */
+function scanStringLiteral(stringLiteral) {
+  const quote = stringLiteral[0];
+  let result = '';
+  let index = 1;
+  while (index < stringLiteral.length) {
+    const character = stringLiteral[index];
+    if (character === quote) return result;
+    if (character === '\\') {
+      index++;
+      const [escape, nextIndex] = scanEscapeSequence(stringLiteral, index);
+      result += escape;
+      index = nextIndex;
+    } else if (character === '\r' || character === '\n') {
+      throw SyntaxError('Unexpected line break in string literal.');
+    } else {
+      result += character;
+      index++;
+    }
+  }
+  throw SyntaxError('Unterminated string literal.');
+}
+
+/**
+ * @param {string} stringLiteral
+ * @param {number} index
+ * @returns {[string, number]}
+ */
+function scanEscapeSequence(stringLiteral, index) {
+  if (index === stringLiteral.length) throw SyntaxError('Unexpected EOF.');
+  const character = stringLiteral[index++];
+  let result;
+  switch (character) {
+    case '\r':
+      if (stringLiteral[index] === '\n') index++;
+    // falls through
+    case '\n':
+    case '\u2028':
+    case '\u2029':
+      result = '';
+      break;
+    case 'r':
+      result = '\r';
+      break;
+    case 'n':
+      result = '\n';
+      break;
+    case 't':
+      result = '\t';
+      break;
+    case 'b':
+      result = '\b';
+      break;
+    case 'f':
+      result = '\f';
+      break;
+    case 'v':
+      result = '\v';
+      break;
+    case 'x':
+      [result, index] = scanHexEscapeSequence(stringLiteral, index, 2);
+      break;
+    case 'u':
+      [result, index] = scanUnicodeEscapeSequence(stringLiteral, index);
+      break;
+    case '0':
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+      [result, index] = scanOctalEscapeSequence(
+        character,
+        stringLiteral,
+        index,
+      );
+      break;
+    default:
+      result = character;
+  }
+  return [result, index];
+}
+
+/**
+ * @param {string} stringLiteral
+ * @param {number} index
+ * @param {number} length
+ * @returns {[string, number]}
+ */
+function scanHexEscapeSequence(stringLiteral, index, length) {
+  let value = 0;
+  for (let offset = 0; offset < length; offset++) {
+    value = value * 16 + readHex(stringLiteral[index++]);
+  }
+  return [String.fromCodePoint(value), index];
+}
+
+/**
+ * @param {string} stringLiteral
+ * @param {number} index
+ * @returns {[string, number]}
+ */
+function scanUnicodeEscapeSequence(stringLiteral, index) {
+  if (stringLiteral[index] === '{') {
+    index++;
+    let value = 0;
+    do {
+      value = value * 16 + readHex(stringLiteral[index++]);
+      if (value > 0x10_ffff) throw SyntaxError('Invalid Unicode escape.');
+    } while (stringLiteral[index] !== '}');
+    return [String.fromCodePoint(value), index + 1];
+  }
+  return scanHexEscapeSequence(stringLiteral, index, 4);
+}
+
+/**
+ * @param {string} character
+ * @param {string} stringLiteral
+ * @param {number} index
+ * @returns {[string, number]}
+ */
+function scanOctalEscapeSequence(character, stringLiteral, index) {
+  let remaining = character <= '3' ? 2 : 1;
+  let value = Number(character);
+  while (remaining > 0) {
+    const nextCharacter = stringLiteral[index];
+    if (
+      nextCharacter === undefined ||
+      nextCharacter < '0' ||
+      nextCharacter > '7'
+    ) {
+      break;
+    }
+    value = value * 8 + Number(nextCharacter);
+    index++;
+    remaining--;
+  }
+  return [String.fromCodePoint(value), index];
+}
+
+/**
+ * @param {string | undefined} character
+ */
+function readHex(character) {
+  if (character === undefined) throw SyntaxError('Invalid hexadecimal escape.');
+  if (character >= '0' && character <= '9') return Number(character);
+  if (character >= 'a' && character <= 'f') return character.charCodeAt(0) - 87;
+  if (character >= 'A' && character <= 'F') return character.charCodeAt(0) - 55;
+  throw SyntaxError('Invalid hexadecimal escape.');
 }
 
 function regexCharacterClass() {

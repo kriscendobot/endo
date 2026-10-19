@@ -35,6 +35,28 @@ test('analyze exported quoted identifier to identifier', t => {
   t.deepEqual(reexports, []);
 });
 
+test('analyze quoted and escaped export names', t => {
+  const { exports, reexports } = analyzeCommonJS(`
+    module.exports = { 'ab cd': value };
+    exports['\\u{D83C}\\u{DF10}'] = value;
+    exports['\\n'] = value;
+    Object.defineProperty(exports, '%notidentifier', { value: value });
+    Object.defineProperty(exports, '\\u0062', { value: value });
+    exports.package = value;
+    exports.var = value;
+  `);
+  t.deepEqual(exports, [
+    'ab cd',
+    '🌐',
+    '\n',
+    '%notidentifier',
+    'b',
+    'package',
+    'var',
+  ]);
+  t.deepEqual(reexports, []);
+});
+
 test('analyze mix of quoted and unquoted destructed identifiers', t => {
   const { exports, reexports } = analyzeCommonJS(`
     function a() {}
@@ -455,11 +477,65 @@ test('Identify some invalid require calls as a side effect', t => {
   t.deepEqual(requires, ['a', './a']);
 });
 
-test('invalid exports cases', t => {
+test('escape sequences in quoted export names', t => {
+  const { exports } = analyzeCommonJS(
+    [
+      `exports['\\x41\\v\\b\\f\\t\\r'] = 1;`,
+      `exports["\\x42\\q"] = 1;`,
+      `exports['\\101\\0\\377\\456\\8'] = 1;`,
+      `exports['a\\\nb\\\r\nc\\\u2028d'] = 1;`,
+      `exports['q"\\u0041\\u{43}'] = 1;`,
+      `exports['\\u{110000}'] = 1;`,
+      `exports['\\xZZ'] = 1;`,
+      `exports['\\uABCG'] = 1;`,
+    ].join('\n'),
+  );
+  t.deepEqual(exports, [
+    'A\v\b\f\t\r',
+    'Bq',
+    'A\u0000\u00ff%68',
+    'abcd',
+    'q"AC',
+  ]);
+});
+
+test('export names with lone surrogates are dropped', t => {
+  const { exports } = analyzeCommonJS(
+    [
+      `exports['\\uD800'] = 1;`,
+      `exports["\\u{DC00}"] = 1;`,
+      `exports["\\uDF10x"] = 1;`,
+      `exports['\\uD83Cx'] = 1;`,
+      `module.exports = { '\\uD83C': a };`,
+      `Object.defineProperty(exports, '\\uDC00', { value: value });`,
+      `exports['\\uD83C\\uDF10'] = 1;`,
+      `exports['\\uD7FF\\uE000\\uFFFF'] = 1;`,
+    ].join('\n'),
+  );
+  t.deepEqual(exports, ['\u{1F310}', '\uD7FF\uE000\uFFFF']);
+});
+
+test('a lone-surrogate key does not drop sibling literal exports', t => {
+  const { exports } = analyzeCommonJS(
+    `module.exports = { 'ok': a, '\\uD800': a, b: b, c };`,
+  );
+  t.deepEqual(exports, ['ok', 'b', 'c']);
+});
+
+test('empty export names', t => {
+  t.deepEqual(analyzeCommonJS(`exports[''] = 1;`).exports, ['']);
+  const { exports } = analyzeCommonJS(`
+    exports[''] = 1;
+    Object.defineProperty(exports, '', { get() { return evil(); } });
+  `);
+  t.deepEqual(exports, []);
+});
+
+test('nonidentifier export names', t => {
   const { exports } = analyzeCommonJS(`
     module.exports['?invalid'] = 'asdf';
   `);
-  t.is(exports.length, 0);
+  t.deepEqual(exports, ['?invalid']);
 });
 
 test('module exports reexport spread', t => {
@@ -568,8 +644,13 @@ test('identifiers', t => {
     exports['α'] = 54;
     exports.package = 'RESERVED!';
   `);
-  t.is(exports.length, 1);
-  t.is(exports[0], 'α');
+  t.deepEqual(exports, [
+    'not identifier',
+    '@notidentifier',
+    '⨉',
+    'α',
+    'package',
+  ]);
 });
 
 test('Literal exports', t => {
